@@ -297,8 +297,11 @@ def generate_leaderboard_csv(leaderboard_table, output_path):
     data_format_sensitivity = []
     data_combined = []
     for model_name, value in leaderboard_table.items():
-        model_name_escaped = model_name.replace("_", "/")
+        base_model_name = strip_run_label(model_name)
+        run_label_suffix = model_name[len(base_model_name) :]
+        model_name_escaped = base_model_name.replace("_", "/")
         model_config = MODEL_CONFIG_MAPPING[model_name_escaped]
+        display_model_name = f"{model_config.display_name}{run_label_suffix}"
 
         cost_data = value.get("cost", {"input_data": [], "output_data": []})
         latency_data = value.get("latency", {"data": []})
@@ -349,7 +352,7 @@ def generate_leaderboard_csv(leaderboard_table, output_path):
         data_non_live.append(
             [
                 "N/A",
-                model_config.display_name,
+                display_model_name,
                 overall_accuracy_non_live["display_accuracy"],
                 summary_ast_non_live["display_accuracy"],
                 simple_ast_non_live["display_accuracy"],
@@ -394,7 +397,7 @@ def generate_leaderboard_csv(leaderboard_table, output_path):
         data_live.append(
             [
                 "N/A",
-                model_config.display_name,
+                display_model_name,
                 overall_accuracy_live["display_accuracy"],
                 summary_ast_live["display_accuracy"],
                 python_simple_ast_live["display_accuracy"],
@@ -424,7 +427,7 @@ def generate_leaderboard_csv(leaderboard_table, output_path):
         data_multi_turn.append(
             [
                 "N/A",
-                model_config.display_name,
+                display_model_name,
                 overall_accuracy_multi_turn["display_accuracy"],
                 multi_turn_base["display_accuracy"],
                 multi_turn_miss_func["display_accuracy"],
@@ -463,7 +466,7 @@ def generate_leaderboard_csv(leaderboard_table, output_path):
         data_agentic.append(
             [
                 "N/A",
-                model_config.display_name,
+                display_model_name,
                 overall_accuracy_agentic["display_accuracy"],
                 summary_web_search["display_accuracy"],
                 web_search_base["display_accuracy"],
@@ -498,7 +501,7 @@ def generate_leaderboard_csv(leaderboard_table, output_path):
         data_format_sensitivity.append(
             [
                 "N/A",
-                model_config.display_name,
+                display_model_name,
                 format_sensitivity_max_delta,
                 format_sensitivity_std,
                 *config_accuracy_values,
@@ -522,7 +525,7 @@ def generate_leaderboard_csv(leaderboard_table, output_path):
             [
                 "N/A",
                 total_overall_accuracy["display_accuracy"],
-                model_config.display_name,
+                display_model_name,
                 model_config.url,
                 cost,
                 latency_mean,

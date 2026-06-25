@@ -16,6 +16,7 @@ from bfcl_eval.constants.eval_config import (
 )
 from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING
 from bfcl_eval.eval_checker.eval_runner import main as evaluation_main
+from bfcl_eval.utils import strip_run_label
 from dotenv import load_dotenv
 from tabulate import tabulate
 
@@ -163,6 +164,41 @@ def generate(
         "--lora-modules",
         help='Specify the path to the LoRA modules for vLLM backend in name="path" format. Can be specified multiple times.',
     ),
+    local_fc_backend: str = typer.Option(
+        "model-handler",
+        "--local-fc-backend",
+        help="For local FC models, use 'model-handler' for BFCL's existing model-specific handler or 'openai-chat' for native OpenAI-compatible Chat Completions tool calling.",
+    ),
+    tool_choice: str = typer.Option(
+        "auto",
+        "--tool-choice",
+        help="tool_choice value for --local-fc-backend openai-chat: auto, required, or none. For vLLM, required uses structured tool argument decoding; auto uses parser extraction.",
+    ),
+    strict_tools: bool = typer.Option(
+        False,
+        "--strict-tools",
+        help="Set strict=true on each tool. vLLM 0.23 accepts this field but ignores it for constrained decoding in tool_choice=auto.",
+    ),
+    tool_schema_mode: str = typer.Option(
+        "bfcl",
+        "--tool-schema-mode",
+        help="Tool schema normalization mode: bfcl, strict-compatible, or openai-strict.",
+    ),
+    parallel_tool_calls: bool = typer.Option(
+        False,
+        "--parallel-tool-calls",
+        help="Send parallel_tool_calls=true for --local-fc-backend openai-chat.",
+    ),
+    served_model_name: Optional[str] = typer.Option(
+        None,
+        "--served-model-name",
+        help="Override the model id sent to the OpenAI-compatible endpoint.",
+    ),
+    run_label: Optional[str] = typer.Option(
+        None,
+        "--run-label",
+        help="Append a sanitized label to the result directory, useful for comparing variants of the same model.",
+    ),
 ):
     """
     Generate the LLM response for one or more models on a test-category (same as openfunctions_evaluation.py).
@@ -186,6 +222,13 @@ def generate(
         enable_lora=enable_lora,
         max_lora_rank=max_lora_rank,
         lora_modules=lora_modules,
+        local_fc_backend=local_fc_backend,
+        tool_choice=tool_choice,
+        strict_tools=strict_tools,
+        tool_schema_mode=tool_schema_mode,
+        parallel_tool_calls=parallel_tool_calls,
+        served_model_name=served_model_name,
+        run_label=run_label,
     )
     load_dotenv(dotenv_path=DOTENV_PATH, verbose=True, override=True)  # Load the .env file
     generation_main(args)
@@ -214,6 +257,11 @@ def results(
             str: The original name of the model.
         """
         if name not in MODEL_CONFIG_MAPPING:
+            base_name = strip_run_label(name)
+            label_suffix = name[len(base_name):]
+            candidate = base_name.replace("_", "/")
+            if candidate in MODEL_CONFIG_MAPPING:
+                return f"{candidate}{label_suffix}"
             candidate = name.replace("_", "/")
             if candidate in MODEL_CONFIG_MAPPING:
                 return candidate
@@ -274,13 +322,31 @@ def evaluate(
         "--partial-eval",
         help="Run evaluation on a partial set of benchmark entries (eg. entries present in the model result files) without raising for missing IDs.",
     ),
+    local_fc_backend: str = typer.Option(
+        "model-handler",
+        "--local-fc-backend",
+        help="Decode local FC results with 'model-handler' or 'openai-chat'. Use openai-chat for native vLLM/OpenAI Chat Completions tool-calling runs.",
+    ),
+    run_label: Optional[str] = typer.Option(
+        None,
+        "--run-label",
+        help="Evaluate the result directory with this run label appended to the model name.",
+    ),
 ):
     """
     Evaluate results from run of one or more models on a test-category (same as eval_runner.py).
     """
 
     load_dotenv(dotenv_path=DOTENV_PATH, verbose=True, override=True)  # Load the .env file
-    evaluation_main(model, test_category, result_dir, score_dir, partial_eval)
+    evaluation_main(
+        model,
+        test_category,
+        result_dir,
+        score_dir,
+        partial_eval,
+        local_fc_backend=local_fc_backend,
+        run_label=run_label,
+    )
 
 
 @cli.command()

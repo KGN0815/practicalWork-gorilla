@@ -257,7 +257,85 @@ For remote deployments (e.g., via RunPod, ngrok, or enterprise gateways) that re
 REMOTE_OPENAI_BASE_URL=https://your-vllm-server.com/v1
 REMOTE_OPENAI_API_KEY=your-api-key-here
 REMOTE_OPENAI_TOKENIZER_PATH=/path/to/local/tokenizer  # Optional: specify local tokenizer for local/remote endpoints
+REMOTE_OPENAI_SERVED_MODEL_NAME=served-model-name       # Optional: override the model id sent to the endpoint
 ```
+
+By default, local OSS `-FC` model entries use their model-specific BFCL prompt
+handler. To test native OpenAI-compatible tool calling on a vLLM server instead,
+use `--local-fc-backend openai-chat`. This sends Chat Completions requests with
+`tools` and `tool_choice` directly to the endpoint.
+
+The vLLM server must be started with automatic tool calling support enabled
+for the served model, for example with the appropriate `--enable-auto-tool-choice`
+and `--tool-call-parser ...` settings for that model.
+
+For vLLM 0.23, `tool_choice=auto` does not use schema-constrained decoding.
+vLLM accepts `strict=true` on tools for API compatibility, but it does not
+change decoding behavior in `auto` mode. In vLLM, schema-constrained tool
+argument decoding is available through `tool_choice=required` or named function
+calling. BFCL exposes `required`; use it only on categories where every entry is
+expected to produce at least one tool call, such as `simple_python`.
+
+Example baseline with native vLLM automatic tool choice:
+
+```bash
+bfcl generate \
+  --model "Qwen/Qwen3-0.6B-FC" \
+  --skip-server-setup \
+  --test-category simple_python \
+  --num-threads 1 \
+  --include-input-log \
+  --local-fc-backend openai-chat \
+  --tool-choice auto \
+  --tool-schema-mode strict-compatible \
+  --run-label vllm-auto
+```
+
+Example vLLM structured tool argument decoding variant:
+
+```bash
+bfcl generate \
+  --model "Qwen/Qwen3-0.6B-FC" \
+  --skip-server-setup \
+  --test-category simple_python \
+  --num-threads 1 \
+  --include-input-log \
+  --local-fc-backend openai-chat \
+  --tool-choice required \
+  --tool-schema-mode strict-compatible \
+  --run-label vllm-required-structured
+```
+
+Example strict-field compatibility variant. This is useful for confirming
+request serialization, but it is not a structured-decoding comparison on vLLM
+0.23 when combined with `tool_choice=auto`:
+
+```bash
+bfcl generate \
+  --model "Qwen/Qwen3-0.6B-FC" \
+  --skip-server-setup \
+  --test-category simple_python \
+  --num-threads 1 \
+  --include-input-log \
+  --local-fc-backend openai-chat \
+  --tool-choice auto \
+  --tool-schema-mode strict-compatible \
+  --strict-tools \
+  --run-label vllm-auto-strict
+```
+
+Use the same backend and label when evaluating:
+
+```bash
+bfcl evaluate \
+  --model "Qwen/Qwen3-0.6B-FC" \
+  --test-category simple_python \
+  --local-fc-backend openai-chat \
+  --run-label vllm-required-structured
+```
+
+For stricter OpenAI-style schemas, `--tool-schema-mode openai-strict` also marks
+all declared fields as required and makes originally optional fields nullable.
 
 #### (Alternate) Script Execution for Generation
 

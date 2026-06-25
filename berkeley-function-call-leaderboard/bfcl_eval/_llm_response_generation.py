@@ -20,6 +20,9 @@ from bfcl_eval.constants.eval_config import (
 from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING
 from bfcl_eval.eval_checker.eval_runner_helper import load_file
 from bfcl_eval.model_handler.base_handler import BaseHandler
+from bfcl_eval.model_handler.api_inference.openai_compatible import (
+    OpenAICompatibleChatFCHandler,
+)
 from bfcl_eval.model_handler.local_inference.base_oss_handler import OSSHandler
 from bfcl_eval.utils import *
 from tqdm import tqdm
@@ -75,18 +78,87 @@ def get_args():
         default=None,
         help="Specify the maximum LoRA rank for vLLM backend.",
     )
+    parser.add_argument(
+        "--local-fc-backend",
+        type=str,
+        default="model-handler",
+        choices=["model-handler", "openai-chat"],
+        help="For local FC models, use the model-specific BFCL handler or native OpenAI-compatible Chat Completions tool calling.",
+    )
+    parser.add_argument(
+        "--tool-choice",
+        type=str,
+        default="auto",
+        choices=["auto", "required", "none"],
+        help=(
+            "tool_choice value for --local-fc-backend openai-chat. For vLLM, "
+            "required uses structured tool argument decoding; auto uses parser extraction."
+        ),
+    )
+    parser.add_argument(
+        "--strict-tools",
+        action="store_true",
+        default=False,
+        help=(
+            "Set strict=true on each tool. vLLM 0.23 accepts this field but "
+            "ignores it for constrained decoding in tool_choice=auto."
+        ),
+    )
+    parser.add_argument(
+        "--tool-schema-mode",
+        type=str,
+        default="bfcl",
+        choices=["bfcl", "strict-compatible", "openai-strict"],
+        help="Schema normalization mode for OpenAI-compatible tool schemas.",
+    )
+    parser.add_argument(
+        "--parallel-tool-calls",
+        action="store_true",
+        default=False,
+        help="Send parallel_tool_calls=true for --local-fc-backend openai-chat.",
+    )
+    parser.add_argument(
+        "--served-model-name",
+        type=str,
+        default=None,
+        help="Override the model id sent to the OpenAI-compatible endpoint.",
+    )
+    parser.add_argument(
+        "--run-label",
+        type=str,
+        default=None,
+        help="Append a sanitized label to the result directory, useful for comparing variants of the same model.",
+    )
     args = parser.parse_args()
     print(f"Parsed arguments: {args}")
 
     return args
 
 
-def build_handler(model_name, temperature):
+def build_handler(model_name, args):
     config = MODEL_CONFIG_MAPPING[model_name]
+    registry_name = append_run_label(model_name, getattr(args, "run_label", None))
+    if (
+        getattr(args, "local_fc_backend", "model-handler") == "openai-chat"
+        and config.is_fc_model
+    ):
+        handler = OpenAICompatibleChatFCHandler(
+            model_name=config.model_name,
+            temperature=args.temperature,
+            registry_name=registry_name,
+            is_fc_model=config.is_fc_model,
+            tool_choice=args.tool_choice,
+            strict_tools=args.strict_tools,
+            tool_schema_mode=args.tool_schema_mode,
+            parallel_tool_calls=args.parallel_tool_calls,
+            served_model_name=args.served_model_name,
+        )
+        return handler
+
     handler = config.model_handler(
         model_name=config.model_name,
-        temperature=temperature,
-        registry_name=model_name,
+        temperature=args.temperature,
+        registry_name=registry_name,
         is_fc_model=config.is_fc_model,
     )
     return handler
@@ -111,7 +183,7 @@ def get_involved_test_entries(test_category_args, run_ids):
 
 
 def collect_test_cases(args, model_name, all_test_categories, all_test_entries_involved):
-    model_name_dir = model_name.replace("/", "_")
+    model_name_dir = append_run_label(model_name, getattr(args, "run_label", None)).replace("/", "_")
     model_result_dir = args.result_dir / model_name_dir
 
     existing_result = []
@@ -221,7 +293,7 @@ def multi_threaded_inference(handler, test_case, include_input_log, exclude_stat
 
 
 def generate_results(args, model_name, test_cases_total):
-    handler = build_handler(model_name, args.temperature)
+    handler = build_handler(model_name, args)
 
     if isinstance(handler, OSSHandler):
         handler: OSSHandler
@@ -372,6 +444,33 @@ def main(args):
         args.model = [args.model]
     if type(args.test_category) is not list:
         args.test_category = [args.test_category]
+
+    if getattr(args, "local_fc_backend", "model-handler") not in [
+        "model-handler",
+        "openai-chat",
+    ]:
+        raise ValueError("--local-fc-backend must be 'model-handler' or 'openai-chat'.")
+    if getattr(args, "tool_choice", "auto") not in ["auto", "required", "none"]:
+        raise ValueError("--tool-choice must be 'auto', 'required', or 'none'.")
+    if getattr(args, "tool_schema_mode", "bfcl") not in [
+        "bfcl",
+        "strict-compatible",
+        "openai-strict",
+    ]:
+        raise ValueError(
+            "--tool-schema-mode must be 'bfcl', 'strict-compatible', or 'openai-strict'."
+        )
+    if (
+        getattr(args, "local_fc_backend", "model-handler") == "openai-chat"
+        and getattr(args, "strict_tools", False)
+        and getattr(args, "tool_choice", "auto") == "auto"
+    ):
+        tqdm.write(
+            "Warning: --strict-tools only sends strict=true. vLLM 0.23 accepts "
+            "that field but does not use it for constrained decoding in "
+            "tool_choice=auto. Use --tool-choice required for vLLM's structured "
+            "tool argument decoding."
+        )
 
     (
         all_test_categories,

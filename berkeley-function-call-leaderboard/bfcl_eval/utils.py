@@ -20,6 +20,7 @@ from bfcl_eval.constants.executable_backend_config import (
 
 _FILE_LOCK_REGISTRY: dict[str, FileLock] = {}
 _FILE_LOCK_REGISTRY_LOCK = Lock()
+RUN_LABEL_SEPARATOR = "__"
 
 
 def _get_file_lock(filepath: str) -> FileLock:
@@ -38,6 +39,28 @@ def _get_file_lock(filepath: str) -> FileLock:
             lock = FileLock(lock_path)
             _FILE_LOCK_REGISTRY[lock_path] = lock
         return lock
+
+
+def sanitize_run_label(run_label: str | None) -> str | None:
+    if run_label is None:
+        return None
+
+    run_label = run_label.strip()
+    if not run_label:
+        return None
+
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", run_label)
+
+
+def append_run_label(model_name: str, run_label: str | None) -> str:
+    run_label = sanitize_run_label(run_label)
+    if run_label is None:
+        return model_name
+    return f"{model_name}{RUN_LABEL_SEPARATOR}{run_label}"
+
+
+def strip_run_label(model_name: str) -> str:
+    return model_name.rsplit(RUN_LABEL_SEPARATOR, 1)[0]
 
 
 #### Helper functions to extract/parse/complete test category from different formats ####

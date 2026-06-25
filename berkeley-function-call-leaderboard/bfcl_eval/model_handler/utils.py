@@ -204,6 +204,108 @@ def convert_to_tool(functions, mapping, model_style):
     return oai_tool
 
 
+def prepare_openai_tools_for_structured_outputs(
+    tools: list[dict],
+    strict_tools: bool = False,
+    schema_mode: str = "bfcl",
+) -> list[dict]:
+    """
+    Prepare OpenAI-compatible tool schemas for FC requests.
+
+    schema_mode:
+    - "bfcl": preserve BFCL's converted schema as-is.
+    - "strict-compatible": add recursive additionalProperties=false where safe.
+    - "openai-strict": also require every declared property and make originally
+      optional properties nullable.
+    """
+    if schema_mode not in {"bfcl", "strict-compatible", "openai-strict"}:
+        raise ValueError(f"Unsupported tool schema mode: {schema_mode}")
+
+    tools = copy.deepcopy(tools)
+    if not strict_tools and schema_mode == "bfcl":
+        return tools
+
+    for tool in tools:
+        function = _get_openai_tool_function(tool)
+        if function is None:
+            continue
+
+        if schema_mode != "bfcl":
+            _normalize_tool_schema(function.get("parameters", {}), schema_mode)
+
+        if strict_tools:
+            function["strict"] = True
+
+    return tools
+
+
+def _get_openai_tool_function(tool: dict) -> dict | None:
+    if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+        return tool["function"]
+    if "parameters" in tool:
+        return tool
+    return None
+
+
+def _normalize_tool_schema(schema: dict, schema_mode: str) -> None:
+    if not isinstance(schema, dict):
+        return
+
+    schema_type = schema.get("type")
+    schema_types = schema_type if isinstance(schema_type, list) else [schema_type]
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        original_required = set(schema.get("required", []))
+
+        for property_name, property_schema in properties.items():
+            if schema_mode == "openai-strict" and property_name not in original_required:
+                _make_schema_nullable(property_schema)
+            _normalize_tool_schema(property_schema, schema_mode)
+
+        if "object" in schema_types:
+            schema["additionalProperties"] = False
+
+        if schema_mode == "openai-strict":
+            schema["required"] = list(properties.keys())
+
+    additional_properties = schema.get("additionalProperties")
+    if isinstance(additional_properties, dict):
+        _normalize_tool_schema(additional_properties, schema_mode)
+
+    items = schema.get("items")
+    if isinstance(items, dict):
+        _normalize_tool_schema(items, schema_mode)
+    elif isinstance(items, list):
+        for item in items:
+            _normalize_tool_schema(item, schema_mode)
+
+    for composite_key in ("anyOf", "oneOf", "allOf"):
+        composite = schema.get(composite_key)
+        if isinstance(composite, list):
+            for item in composite:
+                _normalize_tool_schema(item, schema_mode)
+
+
+def _make_schema_nullable(schema: dict) -> None:
+    if not isinstance(schema, dict):
+        return
+
+    schema_type = schema.get("type")
+    if isinstance(schema_type, str):
+        if schema_type != "null":
+            schema["type"] = [schema_type, "null"]
+    elif isinstance(schema_type, list):
+        if "null" not in schema_type:
+            schema["type"] = schema_type + ["null"]
+    else:
+        schema["type"] = ["string", "null"]
+
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list) and None not in enum_values:
+        enum_values.append(None)
+
+
 def convert_to_function_call(function_call_list):
     if type(function_call_list) == dict:
         function_call_list = [function_call_list]

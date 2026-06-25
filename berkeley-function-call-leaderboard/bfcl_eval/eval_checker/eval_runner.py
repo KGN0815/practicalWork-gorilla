@@ -16,14 +16,25 @@ from bfcl_eval.eval_checker.multi_turn_eval.multi_turn_utils import (
     is_empty_execute_response,
 )
 from bfcl_eval.model_handler.base_handler import BaseHandler
+from bfcl_eval.model_handler.api_inference.openai_compatible import (
+    OpenAICompatibleChatFCHandler,
+)
 from bfcl_eval.model_handler.utils import parse_prompt_variation_params
 from bfcl_eval.utils import *
 from dotenv import load_dotenv
 from tqdm import tqdm
 
 
-def get_handler(model_name: str) -> BaseHandler:
+def get_handler(model_name: str, local_fc_backend: str = "model-handler") -> BaseHandler:
     config = MODEL_CONFIG_MAPPING[model_name]
+    if local_fc_backend == "openai-chat" and config.is_fc_model:
+        return OpenAICompatibleChatFCHandler(
+            model_name=config.model_name,
+            temperature=0,
+            registry_name=model_name,
+            is_fc_model=config.is_fc_model,
+        )
+
     handler: BaseHandler = config.model_handler(
         model_name=config.model_name,
         temperature=0,
@@ -374,6 +385,7 @@ def _evaluate_single_ast_entry(
         # format sensitivity has parallel, multiple cases which is encoded in index
         test_category if test_category != 'format_sensitivity' else index.split(':')[-1],
         model_name,
+        getattr(handler, "underscore_to_dot", None),
     )
 
     if not checker_result["valid"]:
@@ -757,7 +769,12 @@ def evaluate_task(
 
 
 def runner(
-    model_names, test_categories, result_dir, score_dir, allow_missing: bool = False
+    model_names,
+    test_categories,
+    result_dir,
+    score_dir,
+    allow_missing: bool = False,
+    local_fc_backend: str = "model-handler",
 ):
 
     # A dictionary to store the evaluation scores.
@@ -779,7 +796,8 @@ def runner(
         if model_names is not None and model_name not in model_names:
             continue
 
-        model_name_escaped = model_name.replace("_", "/")
+        base_model_name = strip_run_label(model_name)
+        model_name_escaped = base_model_name.replace("_", "/")
 
         print(f"🦍 Model: {model_name}")
 
@@ -789,7 +807,7 @@ def runner(
             if test_category not in test_categories:
                 continue
 
-            handler = get_handler(model_name_escaped)
+            handler = get_handler(model_name_escaped, local_fc_backend)
 
             # We don't evaluate the following categories in the current iteration of the benchmark
             if (
@@ -821,7 +839,18 @@ def runner(
     generate_leaderboard_csv(leaderboard_table, score_dir)
 
 
-def main(model, test_categories, result_dir, score_dir, partial_eval: bool = False):
+def main(
+    model,
+    test_categories,
+    result_dir,
+    score_dir,
+    partial_eval: bool = False,
+    local_fc_backend: str = "model-handler",
+    run_label: str = None,
+):
+    if local_fc_backend not in ["model-handler", "openai-chat"]:
+        raise ValueError("--local-fc-backend must be 'model-handler' or 'openai-chat'.")
+
     if result_dir is None:
         result_dir = RESULT_PATH
     else:
@@ -846,7 +875,7 @@ def main(model, test_categories, result_dir, score_dir, partial_eval: bool = Fal
             # Runner takes in the model name that contains "_", instead of "/", for the sake of file path issues.
             # This is differnet than the model name format that the generation script "openfunctions_evaluation.py" takes in (where the name contains "/").
             # We patch it here to avoid confusing the user.
-            model_names.append(model_name.replace("/", "_"))
+            model_names.append(append_run_label(model_name, run_label).replace("/", "_"))
 
     # Driver function to run the evaluation for all categories involved.
     runner(
@@ -855,6 +884,7 @@ def main(model, test_categories, result_dir, score_dir, partial_eval: bool = Fal
         result_dir,
         score_dir,
         allow_missing=partial_eval,
+        local_fc_backend=local_fc_backend,
     )
 
     print(
@@ -901,6 +931,19 @@ if __name__ == "__main__":
         action="store_true",
         help="Run evaluation on a partial set of benchmark entries (eg. entries present in the model result files) without raising for missing IDs.",
     )
+    parser.add_argument(
+        "--local-fc-backend",
+        type=str,
+        default="model-handler",
+        choices=["model-handler", "openai-chat"],
+        help="Decode local FC results with the model-specific BFCL handler or native OpenAI-compatible Chat Completions handler.",
+    )
+    parser.add_argument(
+        "--run-label",
+        type=str,
+        default=None,
+        help="Evaluate the result directory with this run label appended to the model name.",
+    )
 
     args = parser.parse_args()
 
@@ -911,4 +954,6 @@ if __name__ == "__main__":
         args.result_dir,
         args.score_dir,
         partial_eval=args.partial_eval,
+        local_fc_backend=args.local_fc_backend,
+        run_label=args.run_label,
     )

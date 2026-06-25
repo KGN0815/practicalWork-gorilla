@@ -37,15 +37,26 @@ def ast_checker(
     language: Language,
     test_category: str,
     model_name: str,
+    underscore_to_dot_override: bool | None = None,
 ):
     if "parallel" in test_category:
         return parallel_function_checker_no_order(
-            func_description, model_output, possible_answer, language, model_name
+            func_description,
+            model_output,
+            possible_answer,
+            language,
+            model_name,
+            underscore_to_dot_override,
         )
 
     elif "multiple" in test_category:
         return multiple_function_checker(
-            func_description, model_output, possible_answer, language, model_name
+            func_description,
+            model_output,
+            possible_answer,
+            language,
+            model_name,
+            underscore_to_dot_override,
         )
 
     else:
@@ -57,7 +68,12 @@ def ast_checker(
             }
 
         return simple_function_checker(
-            func_description[0], model_output[0], possible_answer[0], language, model_name
+            func_description[0],
+            model_output[0],
+            possible_answer[0],
+            language,
+            model_name,
+            underscore_to_dot_override,
         )
 
 
@@ -80,10 +96,19 @@ def get_possible_answer_type(possible_answer: list):
     return None
 
 
-def convert_func_name(function_name, model_name: str):
+def convert_func_name(
+    function_name, model_name: str, underscore_to_dot_override: bool | None = None
+):
     model_name_escaped = model_name.replace("_", "/")
+    if model_name_escaped not in MODEL_CONFIG_MAPPING and "__" in model_name:
+        model_name_escaped = model_name.rsplit("__", 1)[0].replace("_", "/")
     if "." in function_name:
-        if MODEL_CONFIG_MAPPING[model_name_escaped].underscore_to_dot:
+        underscore_to_dot = (
+            MODEL_CONFIG_MAPPING[model_name_escaped].underscore_to_dot
+            if underscore_to_dot_override is None
+            else underscore_to_dot_override
+        )
+        if underscore_to_dot:
             # OAI does not support "." in the function name so we replace it with "_". ^[a-zA-Z0-9_-]{1,64}$ is the regex for the name.
             # This happens for OpenAI, Mistral, and Google models
             return re.sub(r"\.", "_", function_name)
@@ -336,6 +361,7 @@ def simple_function_checker(
     possible_answer: dict,
     language: Language,
     model_name: str,
+    underscore_to_dot_override: bool | None = None,
 ):
     possible_answer = list(possible_answer.values())[0]
     # Extract function name and parameters details
@@ -350,7 +376,7 @@ def simple_function_checker(
         "error_type": "simple_function_checker:unclear",
     }
 
-    func_name = convert_func_name(func_name, model_name)
+    func_name = convert_func_name(func_name, model_name, underscore_to_dot_override)
 
     # Check if function name matches
     if func_name not in model_output:
@@ -521,6 +547,7 @@ def parallel_function_checker_enforce_order(
     possible_answers: dict,
     language: Language,
     model_name: str,
+    underscore_to_dot_override: bool | None = None,
 ):
     if len(model_output) != len(possible_answers):
         return {
@@ -544,6 +571,7 @@ def parallel_function_checker_enforce_order(
             possible_answers_list[i],
             language,
             model_name,
+            underscore_to_dot_override,
         )
         if not result["valid"]:
             return result
@@ -557,6 +585,7 @@ def parallel_function_checker_no_order(
     possible_answers: list,
     language: Language,
     model_name: str,
+    underscore_to_dot_override: bool | None = None,
 ):
     if len(model_output) != len(possible_answers):
         return {
@@ -586,6 +615,7 @@ def parallel_function_checker_no_order(
                 possible_answers[i],
                 language,
                 model_name,
+                underscore_to_dot_override,
             )
 
             if result["valid"]:
@@ -626,6 +656,7 @@ def multiple_function_checker(
     possible_answers: list,
     language: Language,
     model_name: str,
+    underscore_to_dot_override: bool | None = None,
 ):
     if len(model_output) != len(possible_answers):
         return {
@@ -643,4 +674,5 @@ def multiple_function_checker(
         possible_answers[0],
         language,
         model_name,
+        underscore_to_dot_override,
     )
